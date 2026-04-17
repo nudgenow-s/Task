@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Stella Engine Fluid</title>
+    <link rel="manifest" href="manifest.json">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* 深色高奢色板 */
+            --bg-base: #0a0a0c;
+            --bg-card: #141417;
+            --bg-input: #1d1d21;
+            --text-primary: #fcfcfd;
+            --text-secondary: #9ea3ae;
+            --border-color: rgba(255,255,255,0.06);
+            
+            /* 强调色：具有生命力的青色 */
+            --key-color: #00e5ff;
+            --key-color-rgb: 0, 229, 255;
+            --danger-color: #ff3b30;
+
+            --ease-out-quint: cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        body { 
+            font-family: 'Inter', -apple-system, sans-serif; 
+            background: var(--bg-base); margin: 0; color: var(--text-primary);
+            overflow: hidden; /* 防止原生滚动干扰滑动卡片 */
+            height: 100vh; display: flex; flex-direction: column;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* 顶部导航，增加极细底边 */
+        header { 
+            padding: 20px; border-bottom: 1px solid var(--border-color); 
+            display: flex; justify-content: space-between; align-items: center;
+            backdrop-filter: blur(10px); background: rgba(10,10,12,0.8); z-index: 10;
+        }
+        h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.5px; }
+        #net-status { font-size: 12px; font-weight: 600; }
+
+        /* 输入区域 - 悬浮控制台风格 */
+        .input-console {
+            padding: 16px; background: var(--bg-card);
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+        .input-wrapper {
+            background: var(--bg-input); border-radius: 12px;
+            border: 1px solid var(--border-color); padding: 4px 12px;
+            display: flex; align-items: center; transition: border-color 0.2s;
+        }
+        .input-wrapper:focus-within { border-color: var(--key-color); }
+        
+        #task-input { 
+            flex: 1; border: none; background: transparent; 
+            font-size: 16px; outline: none; padding: 12px 0;
+            color: var(--text-primary); font-family: inherit;
+        }
+        #task-input::placeholder { color: var(--text-secondary); }
+
+        .add-btn-fluid {
+            background: transparent; border: 1px solid var(--key-color);
+            color: var(--key-color); width: 36px; height: 36px;
+            border-radius: 50%; font-size: 20px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            margin-left: 10px; transition: all 0.2s;
+        }
+        .add-btn-fluid:active { background: rgba(var(--key-color-rgb), 0.1); transform: scale(0.95); }
+
+        /* 强制执行协议的微小开关 */
+        .mandatory-bar {
+            padding: 8px 16px; font-size: 12px; color: var(--text-secondary);
+            display: flex; align-items: center; gap: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        input[type="checkbox"] { accent-color: var(--danger-color); margin: 0; }
+
+        /* 可滚动区域 */
+        .main-scroller { flex: 1; overflow-y: scroll; -webkit-overflow-scrolling: touch; padding-bottom: 40px; }
+
+        /* 任务卡片容器 - 关键：处理滑动视口 */
+        .task-list { padding: 16px 0; }
+        
+        /* 任务卡片外层容器（固定视口，处理背景动作） */
+        .task-card-viewport {
+            position: relative; overflow: hidden;
+            margin-bottom: 1px; /* 产生极细分割线 */
+            touch-action: pan-y; /* 允许垂直滚动，锁定水平滑动 */
+        }
+
+        /* 卡片背景动作层 */
+        .card-action-back {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 25px; box-sizing: border-box; font-size: 14px; font-weight: 600;
+        }
+        .action-archive { color: var(--key-color); background: var(--bg-base); width: 100%; height: 100%; position: absolute; left: 0; display: flex; align-items: center; padding-left: 25px;}
+        .action-delete { color: var(--danger-color); background: var(--bg-base); width: 100%; height: 100%; position: absolute; right: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 25px;}
+
+        /* 卡片主体层（实际滑动的层） */
+        .task-card-body {
+            background: var(--bg-card); padding: 20px;
+            position: relative; z-index: 2;
+            transition: transform 0.1s linear; /* 用于触摸时的轻微跟手感，松手后改为 quint 动效 */
+            display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: start;
+        }
+
+        /* 状态指示器（强制执行） */
+        .mandatory-indicator {
+            width: 4px; height: 100%; background: var(--danger-color);
+            position: absolute; left: 0; top: 0; border-radius: 0 4px 4px 0;
+            display: none; box-shadow: 0 0 10px rgba(255, 59, 48, 0.5);
+        }
+        .mandatory-active .mandatory-indicator { display: block; }
+        .mandatory-active .task-title { font-weight: 600; }
+
+        /* 高级感进度圆环 */
+        .progress-ring {
+            width: 40px; height: 40px; position: relative;
+            grid-row: span 2; margin-top: 2px;
+        }
+        .progress-ring svg { transform: rotate(-90deg); width: 40px; height: 40px; }
+        .progress-ring circle {
+            fill: none; stroke-width: 3;
+            stroke-linecap: round; transition: stroke-dashoffset 0.3s var(--ease-out-quint);
+        }
+        .ring-bg { stroke: rgba(255,255,255,0.05); }
+        .ring-fill { 
+            stroke: var(--key-color); 
+            stroke-dasharray: 113.1; /* 2 * pi * r (18) */
+            stroke-dashoffset: 113.1;
+        }
+        .progress-text {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 10px; font-weight: 600; color: var(--key-color);
+        }
+
+        .task-content { flex: 1; }
+        .task-title { font-size: 15px; margin: 0 0 6px 0; line-height: 1.4; color: var(--text-primary); }
+        
+        /* 进度滑块 - 整合进高级卡片，更纤细 */
+        .slider-wrapper { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+        input[type="range"] { 
+            flex: 1; height: 2px; -webkit-appearance: none; background: rgba(255,255,255,0.1); 
+            outline: none; margin: 0;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 12px; height: 12px; 
+            background: var(--key-color); border-radius: 50%; cursor: pointer;
+            box-shadow: 0 0 10px rgba(var(--key-color-rgb), 0.5);
+        }
+
+        /* 浮动诊断（拖延症对策） */
+        .diagnose-alert {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            background: rgba(20, 20, 23, 0.9); color: var(--key-color); padding: 12px 24px;
+            border-radius: 20px; font-size: 13px; font-weight: 600; display: none; z-index: 100;
+            backdrop-filter: blur(10px); border: 1px solid var(--border-color);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>STELLA ENGINE</h1>
+    <div id="net-status">LOADING</div>
+</header>
+
+<div class="input-console">
+    <div class="input-wrapper">
+        <input type="text" id="task-input" placeholder="输入下一个系统里程碑...">
+        <button class="add-btn-fluid" onclick="addTask()">+</button>
+    </div>
+</div>
+<div class="mandatory-bar">
+    <input type="checkbox" id="is-mandatory"> 激活强制执行协议 (禁止挂起)
+</div>
+
+<div class="main-scroller">
+    <div id="task-list" class="task-list">
+        </div>
+</div>
+
+<div id="toast" class="diagnose-alert">系统提示：立即执行！</div>
+
+<script>
+    // --- 核心逻辑 (V3 整合版) ---
+    let tasks = JSON.parse(localStorage.getItem('stella_fuid_tasks')) || [];
+
+    function addTask() {
+        const input = document.getElementById('task-input');
+        const isMandatory = document.getElementById('is-mandatory').checked;
+        if (!input.value) return;
+
+        const task = {
+            id: Date.now(),
+            name: input.value,
+            mandatory: isMandatory,
+            progress: 0
+        };
+
+        isMandatory ? tasks.unshift(task) : tasks.push(task);
+        save();
+        input.value = '';
+        document.getElementById('is-mandatory').checked = false;
+        
+        if(isMandatory) showToast("强制执行协议已激活。目标已锁定。");
+    }
+
+    function save() {
+        localStorage.setItem('stella_fuid_tasks', JSON.stringify(tasks));
+        render();
+    }
+
+    function updateProgress(id, val) {
+        tasks = tasks.map(t => t.id === id ? {...t, progress: val} : t);
+        // 不在这里进行 full render，只更新局部 UI 提升性能
+        localStorage.setItem('stella_fuid_tasks', JSON.stringify(tasks));
+        
+        // 更新圆环
+        const offset = 113.1 - (val / 100) * 113.1;
+        document.querySelector(`#ring-${id}`).style.strokeDashoffset = offset;
+        document.querySelector(`#text-${id}`).textContent = val + '%';
+    }
+
+    // --- 高级滑动交互引擎 ---
+    let touchStartX = 0;
+    let currentSlideEl = null;
+    let isDragging = false;
+    const swipeThreshold = 100; // 触发动作的阈值(px)
+
+    function initSwipeEvents() {
+        const scroller = document.querySelector('.main-scroller');
+
+        scroller.addEventListener('touchstart', e => {
+            // 找到被点击的卡片主体
+            const cardBody = e.target.closest('.task-card-body');
+            if (!cardBody) return;
+            
+            currentSlideEl = cardBody;
+            touchStartX = e.touches[0].clientX;
+            currentSlideEl.style.transition = 'none'; // 触摸时取消动画，追求跟手感
+            isDragging = true;
+        }, {passive: true});
+
+        scroller.addEventListener('touchmove', e => {
+            if (!currentSlideEl || !isDragging) return;
+            
+            const touchX = e.touches[0].clientX;
+            const diffX = touchX - touchStartX;
+
+            // 增加阻尼感 (champions4good 风格)
+            // 如果超过阈值，滑动变慢
+            let dampenDiffX = diffX;
+            if (Math.abs(diffX) > swipeThreshold) {
+                const overValue = Math.abs(diffX) - swipeThreshold;
+                dampenDiffX = (diffX > 0 ? 1 : -1) * (swipeThreshold + overValue * 0.3);
+            }
+
+            // 应用滑动变色逻辑 (可选)
+            const backAction = currentSlideEl.previousElementSibling;
+            if (dampenDiffX > 0) {
+                // 右滑 (归档)
+                backAction.querySelector('.action-archive').style.opacity = 1;
+                backAction.querySelector('.action-delete').style.opacity = 0;
+            } else {
+                // 左滑 (删除)
+                backAction.querySelector('.action-archive').style.opacity = 0;
+                backAction.querySelector('.action-delete').style.opacity = 1;
+            }
+
+            currentSlideEl.style.transform = `translateX(${dampenDiffX}px)`;
+        }, {passive: true});
+
+        scroller.addEventListener('touchend', e => {
+            if (!currentSlideEl || !isDragging) return;
+            isDragging = false;
+            
+            const touchEndX = e.changedTouches[0].clientX;
+            const diffX = touchEndX - touchStartX;
+            const taskId = parseInt(currentSlideEl.dataset.id);
+
+            // 恢复 Quint 动画，产生高级感的回弹
+            currentSlideEl.style.transition = 'transform 0.5s var(--ease-out-quint)';
+
+            if (diffX > swipeThreshold) {
+                // 触发右滑动作 (归档 - 暂定为删除)
+                animateOut(currentSlideEl, '100%', () => executeAction(taskId, 'archive'));
+            } else if (diffX < -swipeThreshold) {
+                // 触发左滑动作 (删除)
+                animateOut(currentSlideEl, '-100%', () => executeAction(taskId, 'delete'));
+            } else {
+                // 回弹到原位
+                currentSlideEl.style.transform = 'translateX(0px)';
+            }
+            
+            currentSlideEl = null;
+        });
+    }
+
+    function animateOut(el, targetX, callback) {
+        el.style.transform = `translateX(${targetX})`;
+        // 缩减高度动效
+        const viewport = el.closest('.task-card-viewport');
+        setTimeout(() => {
+            viewport.style.transition = 'all 0.4s var(--ease-out-quint)';
+            viewport.style.height = '0px';
+            viewport.style.marginBottom = '0px';
+            viewport.style.opacity = '0';
+        }, 200);
+        setTimeout(callback, 600);
+    }
+
+    function executeAction(id, type) {
+        tasks = tasks.filter(t => t.id !== id);
+        localStorage.setItem('stella_fuid_tasks', JSON.stringify(tasks));
+        // 动作完成后重新渲染，移除 DOM
+        render(); 
+    }
+
+    function render() {
+        const list = document.getElementById('task-list');
+        // 保存当前滚动位置
+        const currentScroll = document.querySelector('.main-scroller').scrollTop;
+
+        list.innerHTML = tasks.map(t => {
+            const offset = 113.1 - (t.progress / 100) * 113.1;
+            return `
+            <div class="task-card-viewport">
+                <div class="card-action-back">
+                    <div class="action-archive">ARCHIVE</div>
+                    <div class="action-delete">DELETE</div>
+                </div>
+                <div class="task-card-body ${t.mandatory ? 'mandatory-active' : ''}" data-id="${t.id}">
+                    <div class="mandatory-indicator"></div>
+                    
+                    <div class="progress-ring">
+                        <svg viewBox="0 0 40 40">
+                            <circle class="ring-bg" cx="20" cy="20" r="18"></circle>
+                            <circle class="ring-fill" id="ring-${t.id}" cx="20" cy="20" r="18" style="stroke-dashoffset: ${offset}"></circle>
+                        </svg>
+                        <div class="progress-text" id="text-${t.id}">${t.progress}%</div>
+                    </div>
+
+                    <div class="task-content">
+                        <p class="task-title">${t.name}</p>
+                        <div class="slider-wrapper">
+                            <input type="range" value="${t.progress}" oninput="updateProgress(${t.id}, this.value)">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `}).join('');
+        
+        // 恢复滚动位置
+        document.querySelector('.main-scroller').scrollTop = currentScroll;
+    }
+
+    function showToast(msg) {
+        const toast = document.getElementById('toast');
+        toast.textContent = msg;
+        toast.style.display = 'block';
+        setTimeout(() => toast.style.display = 'none', 3000);
+    }
+
+    // --- PWA & 状态 ---
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./sw.js');
+    }
+
+    function checkNet() {
+        const status = document.getElementById('net-status');
+        status.textContent = navigator.onLine ? "ONLINE" : "OFFLINE";
+        status.style.color = navigator.onLine ? "var(--key-color)" : "var(--danger-color)";
+    }
+    window.addEventListener('online', checkNet);
+    window.addEventListener('offline', checkNet);
+    
+    // 初始化
+    checkNet();
+    render();
+    initSwipeEvents(); // 激活滑动引擎
+</script>
+</body>
+</html>
